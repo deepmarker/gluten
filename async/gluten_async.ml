@@ -39,10 +39,8 @@ module Buffer = Gluten.Buffer
 module Make_IO_Loop (Io : Gluten_async_intf.IO) = struct
   let read socket read_buffer =
     let ivar = Ivar.create () in
-    Buffer.put
-      ~f:(fun buf ~off ~len k -> Async.upon (Io.read socket buf ~off ~len) k)
-      read_buffer
-      (Ivar.fill ivar);
+    let readf buf ~off ~len k = Io.read socket buf ~off ~len >>> k in
+    Buffer.put ~f:readf read_buffer (Ivar.fill ivar);
     Ivar.read ivar
 
   let start : type t.
@@ -148,10 +146,7 @@ module Make_server (Io : Gluten_async_intf.IO) = struct
       ~write_complete
 end
 
-module Unix_io :
-  Gluten_async_intf.IO
-  with type 'a socket = ([ `Active ], ([< Socket.Address.t ] as 'a)) Socket.t =
-struct
+module Unix_io = struct
   type 'a socket = ([ `Active ], ([< Socket.Address.t ] as 'a)) Socket.t
 
   let read socket bigstring ~off ~len =
@@ -167,7 +162,7 @@ struct
         | `Ready -> go fd buffer )
       | `Error (Unix.Unix_error (EBADF, _, _)) -> badfd fd
       | `Error exn ->
-        Deferred.don't_wait_for (Fd.close fd);
+        don't_wait_for (Fd.close fd);
         raise exn
     and go fd buffer =
       if Fd.supports_nonblock fd
@@ -186,7 +181,7 @@ struct
       else
         Fd.syscall_in_thread fd ~name:"read" (fun file_descr ->
           Bigstring_unix.read file_descr bigstring ~pos:off ~len)
-        >>= fun result -> finish fd buffer result
+        >>= finish fd buffer
     in
     go fd bigstring
 
@@ -250,7 +245,7 @@ module Make_client (Io : Gluten_async_intf.IO) = struct
          ~read_complete
          ~write_complete
          socket);
-    Deferred.return { connection; socket; closed = Ivar.read read_complete }
+    return { connection; socket; closed = Ivar.read read_complete }
 
   let upgrade t protocol =
     Client_connection.upgrade_protocol t.connection protocol
