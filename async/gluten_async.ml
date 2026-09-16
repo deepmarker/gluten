@@ -92,10 +92,13 @@ module Make_IO_Loop (Io : Gluten_async_intf.IO) = struct
     Scheduler.within ~monitor reader_thread;
     Scheduler.within ~monitor writer_thread;
     Monitor.detach_and_iter_errors monitor ~f:(fun exn ->
+      (* [report_exn] may wake up the reader or writer (e.g. to flush a GOAWAY),
+         whose I/O can raise again (EPIPE): keep them under [monitor] instead
+         of the monitor that is iterating over its errors. *)
+      Scheduler.within ~monitor (fun () -> Runtime.report_exn t exn);
       (* Kill the connection when either reader or writer encounter an error. *)
       Ivar.fill_if_empty read_complete ();
-      Ivar.fill_if_empty write_complete ();
-      Runtime.report_exn t exn);
+      Ivar.fill_if_empty write_complete ());
     (* The Tcp module will close the file descriptor once this becomes
        determined. *)
     Deferred.all_unit [ Ivar.read read_complete; Ivar.read write_complete ]
